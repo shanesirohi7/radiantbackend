@@ -52,7 +52,6 @@ const PostSchema = new mongoose.Schema({
 
 const Post = mongoose.model('Post', PostSchema);
 
-// Signup Route
 app.post('/signup', async (req, res) => {
   const { name, email, password, school } = req.body;
   if (!name || !email || !password || !school) {
@@ -64,16 +63,19 @@ app.post('/signup', async (req, res) => {
     if (existingUser) return res.status(400).json({ error: 'User already exists' });
 
     const hashedPassword = await bcrypt.hash(password, 10);
-
-    // ✅ Create user without profile setup details
     const user = new User({ name, email, password: hashedPassword, school });
     await user.save();
 
-    res.status(201).json({ message: 'Signup successful', userId: user._id });
+    // ✅ Generate JWT token
+    const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, { expiresIn: '7d' });
+
+    res.status(201).json({ message: 'Signup successful', token, userId: user._id });
   } catch (err) {
+    console.error("❌ Server Error:", err);
     res.status(500).json({ error: 'Server error' });
   }
 });
+
 app.post('/setupProfile', async (req, res) => {
   const { token } = req.headers;
   const { profilePic, class: userClass, section, interests, instagramUsername } = req.body;
