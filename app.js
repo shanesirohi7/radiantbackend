@@ -76,6 +76,7 @@ app.post('/signup', async (req, res) => {
   }
 });
 
+
 app.post('/setupProfile', async (req, res) => {
   const { token } = req.headers;
   const { profilePic, class: userClass, section, interests, instagramUsername } = req.body;
