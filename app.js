@@ -6,51 +6,46 @@ const jwt = require('jsonwebtoken');
 const cors = require('cors');
 const cloudinary = require('cloudinary').v2;
 
+const http = require('http');
+const { Server } = require('socket.io');
+
 const app = express();
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: { origin: '*' }
+});
 const PORT = process.env.PORT || 5000;
 
-// Middleware
+
 app.use(express.json());
 app.use(cors());
 
-// Cloudinary Config
 cloudinary.config({
   cloud_name: process.env.CLOUD_NAME,
   api_key: process.env.CLOUD_API_KEY,
   api_secret: process.env.CLOUD_API_SECRET,
 });
 
-// MongoDB Connection
 mongoose.connect(process.env.MONGO_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
 }).then(() => console.log('MongoDB Connected'))
   .catch(err => console.error(err));
 
-// User Schema
 const UserSchema = new mongoose.Schema({
   name: String,
   email: { type: String, unique: true },
   password: String,
   school: String,
-  profilePic: String, // Profile picture URL (uploaded to Cloudinary)
-  class: String,      // New field (6th - 12th)
-  section: String,    // New field (A - J)
-  interests: [String],// New field (Array of interests)
-  instagramUsername: String, // New field
+  profilePic: String,
+  class: String,     
+  section: String,   
+  interests: [String],
+  instagramUsername: String, 
 });
 
 const User = mongoose.model('User', UserSchema);
 
-// Post Schema
-const PostSchema = new mongoose.Schema({
-  user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-  content: String,
-  image: String,
-  createdAt: { type: Date, default: Date.now },
-});
-
-const Post = mongoose.model('Post', PostSchema);
 
 app.post('/signup', async (req, res) => {
   const { name, email, password, school } = req.body;
@@ -66,18 +61,18 @@ app.post('/signup', async (req, res) => {
     const user = new User({ name, email, password: hashedPassword, school });
     await user.save();
 
-    // ✅ Generate JWT token
+    // JWT Generation
     const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, { expiresIn: '7d' });
 
     res.status(201).json({ message: 'Signup successful', token, userId: user._id });
   } catch (err) {
-    console.error("❌ Server Error:", err);
+    console.error("Server Error:", err);
     res.status(500).json({ error: 'Server error' });
   }
 });
 
 
-app.post('/setupProfile', async (req, res) => {
+app.post('/profile', async (req, res) => {
   const { token } = req.headers;
   const { profilePic, class: userClass, section, interests, instagramUsername } = req.body;
 
@@ -89,7 +84,7 @@ app.post('/setupProfile', async (req, res) => {
 
     if (!user) return res.status(404).json({ error: 'User not found' });
 
-    // ✅ Update user profile with new fields
+  
     user.profilePic = profilePic;
     user.class = userClass;
     user.section = section;
@@ -97,11 +92,12 @@ app.post('/setupProfile', async (req, res) => {
     user.instagramUsername = instagramUsername;
     await user.save();
 
-    res.json({ message: 'Profile setup complete', user });
+    res.json({ message: 'Profile updated successfully', user });
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
   }
 });
+
 
 app.post('/login', async (req, res) => {
   const { email, password } = req.body;
@@ -148,34 +144,30 @@ app.get('/profile', async (req, res) => {
 });
 
 
-// Create Post
-app.post('/createPost', async (req, res) => {
-  const { token } = req.headers;
-  const { content, image } = req.body;
 
-  if (!token) return res.status(401).json({ error: 'Unauthorized' });
-  if (!content) return res.status(400).json({ error: 'Content is required' });
 
-  try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    const user = await User.findById(decoded.userId);
 
-    const newPost = new Post({ user: user._id, content, image });
-    await newPost.save();
-    res.status(201).json({ message: 'Post created successfully' });
-  } catch (err) {
-    res.status(500).json({ error: 'Server error' });
-  }
+io.on('connection', (socket) => {
+  console.log('A user connected:', socket.id);
+
+  socket.on('message', (data) => {
+    console.log('Message received:', data);
+    io.emit('message', data); 
+  });
+
+  socket.on('disconnect', () => {
+    console.log('A user disconnected:', socket.id);
+  });
 });
 
-// Fetch Posts
-app.get('/posts', async (req, res) => {
-  try {
-    const posts = await Post.find().populate('user', 'name profilePic').sort({ createdAt: -1 });
-    res.json(posts);
-  } catch (err) {
-    res.status(500).json({ error: 'Server error' });
-  }
-});
+server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
+//Firstly implement a very quick and efficient socket.io  
+//Profile(User Profile + Other Users Profile)
+//Friends
+//Recommendations + Search
+//Memories
+//Messaging
+//Events
+//QuickMatch
