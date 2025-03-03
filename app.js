@@ -49,6 +49,69 @@ mongoose.connect(process.env.MONGO_URI, {
 const User = mongoose.model('User', UserSchema);
 
 //VERY RISKY CODE HERE
+app.get('/searchUsers', async (req, res) => {
+  const { query } = req.query;
+  const { token } = req.headers;
+
+  if (!token) {
+      return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  if (!query) {
+      return res.status(400).json({ error: 'Search query is required' });
+  }
+
+  try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      const userId = decoded.userId;
+
+      const users = await User.find({
+          $and: [
+              { _id: { $ne: userId } }, // Exclude the user who is searching
+              {
+                  $or: [
+                      { name: { $regex: query, $options: 'i' } },
+                      { school: { $regex: query, $options: 'i' } },
+                      { class: { $regex: query, $options: 'i' } },
+                      { section: { $regex: query, $options: 'i' } },
+                  ],
+              },
+          ],
+      }).select('name profilePic class section school');
+
+      res.json(users);
+  } catch (err) {
+      console.error('Search error:', err);
+      res.status(500).json({ error: 'Server error' });
+  }
+});
+app.get('/otherProfile/:userId', async (req, res) => {
+  const { userId } = req.params;
+
+  if (!userId) return res.status(400).json({ error: 'User ID is required' });
+
+  try {
+      const user = await User.findById(userId).select('-password');
+
+      if (!user) return res.status(404).json({ error: 'User not found' });
+
+      // Populate friends and friendRequests if you want to include them
+      await user.populate('friends', 'name profilePic').populate('friendRequests', 'name profilePic');
+
+      // Populate the follower and following arrays
+      const followers = await User.find({ friends: userId }).select('name profilePic');
+      const following = await User.find({ _id: { $in: user.friends } }).select('name profilePic');
+
+      res.json({
+          ...user.toObject(),
+          followers,
+          following
+      });
+  } catch (err) {
+      res.status(500).json({ error: 'Server error' });
+  }
+});
+
 app.post('/sendFriendRequest', async (req, res) => {
   const { token } = req.headers;
   const { friendId } = req.body;
