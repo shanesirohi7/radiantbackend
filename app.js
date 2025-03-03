@@ -32,19 +32,211 @@ mongoose.connect(process.env.MONGO_URI, {
 }).then(() => console.log('MongoDB Connected'))
   .catch(err => console.error(err));
 
-const UserSchema = new mongoose.Schema({
-  name: String,
-  email: { type: String, unique: true },
-  password: String,
-  school: String,
-  profilePic: String,
-  class: String,     
-  section: String,   
-  interests: [String],
-  instagramUsername: String, 
+  const UserSchema = new mongoose.Schema({
+    name: String,
+    email: { type: String, unique: true },
+    password: String,
+    school: String,
+    profilePic: String,
+    class: String,
+    section: String,
+    interests: [String],
+    instagramUsername: String,
+    friends: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+    friendRequests: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
 });
 
 const User = mongoose.model('User', UserSchema);
+
+//VERY RISKY CODE HERE
+app.post('/sendFriendRequest', async (req, res) => {
+  const { token } = req.headers;
+  const { friendId } = req.body;
+
+  if (!token || !friendId) return res.status(400).json({ error: 'Missing parameters' });
+
+  try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      const userId = decoded.userId;
+
+      if (userId === friendId) return res.status(400).json({ error: 'Cannot send request to yourself' });
+
+      const user = await User.findById(userId);
+      const friend = await User.findById(friendId);
+
+      if (!user || !friend) return res.status(404).json({ error: 'User not found' });
+
+      if (friend.friendRequests.includes(userId)) return res.status(400).json({ error: 'Friend request already sent' });
+      if (user.friends.includes(friendId)) return res.status(400).json({error: 'already friends'});
+
+      friend.friendRequests.push(userId);
+      await friend.save();
+
+      res.json({ message: 'Friend request sent successfully' });
+  } catch (err) {
+      res.status(500).json({ error: 'Server error' });
+  }
+});
+app.post('/acceptFriendRequest', async (req, res) => {
+  const { token } = req.headers;
+  const { friendId } = req.body;
+
+  if (!token || !friendId) return res.status(400).json({ error: 'Missing parameters' });
+
+  try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      const userId = decoded.userId;
+
+      const user = await User.findById(userId);
+      const friend = await User.findById(friendId);
+
+      if (!user || !friend) return res.status(404).json({ error: 'User not found' });
+
+      if (!user.friendRequests.includes(friendId)) return res.status(400).json({ error: 'No friend request from this user' });
+
+      user.friendRequests.pull(friendId);
+      user.friends.push(friendId);
+      friend.friends.push(userId);
+
+      await user.save();
+      await friend.save();
+
+      res.json({ message: 'Friend request accepted' });
+  } catch (err) {
+      res.status(500).json({ error: 'Server error' });
+  }
+});
+app.post('/rejectFriendRequest', async (req, res) => {
+  const { token } = req.headers;
+  const { friendId } = req.body;
+
+  if (!token || !friendId) return res.status(400).json({ error: 'Missing parameters' });
+
+  try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      const userId = decoded.userId;
+
+      const user = await User.findById(userId);
+
+      if (!user) return res.status(404).json({ error: 'User not found' });
+
+      if (!user.friendRequests.includes(friendId)) return res.status(400).json({ error: 'No friend request from this user' });
+
+      user.friendRequests.pull(friendId);
+      await user.save();
+
+      res.json({ message: 'Friend request rejected' });
+  } catch (err) {
+      res.status(500).json({ error: 'Server error' });
+  }
+});
+app.get('/getFriends', async (req, res) => {
+  const { token } = req.headers;
+
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+  try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      const userId = decoded.userId;
+
+      const user = await User.findById(userId).populate('friends', 'name profilePic');
+
+      if (!user) return res.status(404).json({ error: 'User not found' });
+
+      res.json(user.friends);
+  } catch (err) {
+      res.status(500).json({ error: 'Server error' });
+  }
+});
+app.get('/getFriendRequests', async (req, res) => {
+  const { token } = req.headers;
+
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+  try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      const userId = decoded.userId;
+
+      const user = await User.findById(userId).populate('friendRequests', 'name profilePic');
+
+      if (!user) return res.status(404).json({ error: 'User not found' });
+
+      res.json(user.friendRequests);
+  } catch (err) {
+      res.status(500).json({ error: 'Server error' });
+  }
+});
+app.get('/recommendUsers', async (req, res) => {
+  const { token } = req.headers;
+
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+  try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      const userId = decoded.userId;
+
+      const user = await User.findById(userId);
+
+      if (!user) return res.status(404).json({ error: 'User not found' });
+
+      const sameClass = await User.find({ class: user.class, _id: { $ne: userId } })
+          .select('name profilePic class section interests');
+
+      const sameSchool = await User.find({ school: user.school, _id: { $ne: userId } })
+          .select('name profilePic class section interests');
+
+      const sameInterests = await User.find({ interests: { $in: user.interests }, _id: { $ne: userId } })
+          .select('name profilePic class section interests');
+
+      // Simple weighted algorithm (adjust weights as needed)
+      const recommendations = [];
+      const seen = new Set();
+
+      sameClass.forEach(u => {
+          if (!seen.has(u._id.toString())) {
+              recommendations.push({ ...u.toObject(), weight: 3 });
+              seen.add(u._id.toString());
+          }
+      });
+
+      sameSchool.forEach(u => {
+          if (!seen.has(u._id.toString())) {
+              recommendations.push({ ...u.toObject(), weight: 2 });
+              seen.add(u._id.toString());
+          }
+      });
+
+      sameInterests.forEach(u => {
+          if (!seen.has(u._id.toString())) {
+              recommendations.push({ ...u.toObject(), weight: 1 });
+              seen.add(u._id.toString());
+          }
+      });
+
+      // Sort by weight (highest first)
+      recommendations.sort((a, b) => b.weight - a.weight);
+
+      res.json(recommendations);
+  } catch (err) {
+      res.status(500).json({ error: 'Server error' });
+  }
+});
+app.get('/userDetails/:userId', async (req, res) => {
+  const { userId } = req.params;
+
+  if (!userId) return res.status(400).json({ error: 'User ID is required' });
+
+  try {
+      const user = await User.findById(userId).select('-password');
+
+      if (!user) return res.status(404).json({ error: 'User not found' });
+
+      res.json(user);
+  } catch (err) {
+      res.status(500).json({ error: 'Server error' });
+  }
+});
+//RISKY CODE OVER
 
 
 app.post('/signup', async (req, res) => {
@@ -161,13 +353,3 @@ io.on('connection', (socket) => {
 });
 
 server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-
-
-//Firstly implement a very quick and efficient socket.io  
-//Profile(User Profile + Other Users Profile)
-//Friends
-//Recommendations + Search
-//Memories
-//Messaging
-//Events
-//QuickMatch
