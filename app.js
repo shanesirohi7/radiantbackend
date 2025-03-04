@@ -104,21 +104,12 @@ app.get('/otherProfile/:userId', async (req, res) => {
           return res.status(404).json({ error: 'User not found' });
       }
 
-      // Populate only necessary fields for friends and followers
-      await user
-          .populate('friends', 'name profilePic')
-          .populate('friendRequests', 'name profilePic');
+      // Populate only 'friends' (no need for 'friendRequests' here)
+      await user.populate('friends', 'name profilePic');
 
-      const followers = await User.find({ friends: userId }).select('name profilePic');
-      const following = await User.find({ _id: { $in: user.friends } }).select('name profilePic');
-
-      res.json({
-          ...user.toObject(),
-          followers,
-          following,
-      });
+      res.json(user); // Directly send the user object
   } catch (err) {
-      console.error('Error fetching other profile:', err); // Log the error
+      console.error('Error fetching other profile:', err);
       if (err.name === 'CastError') {
           return res.status(400).json({ error: 'Invalid User ID' });
       }
