@@ -50,34 +50,45 @@ const User = mongoose.model('User', UserSchema);
 
 //VERY RISKY CODE HERE
 app.get('/searchUsers', async (req, res) => {
-  const { query } = req.query;
+  const { query, school, class: userClass, section, interests } = req.query;
   const { token } = req.headers;
 
   if (!token) {
       return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  if (!query) {
-      return res.status(400).json({ error: 'Search query is required' });
-  }
-
   try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
       const userId = decoded.userId;
 
-      const users = await User.find({
-          $and: [
-              { _id: { $ne: userId } }, // Exclude the user who is searching
-              {
-                  $or: [
-                      { name: { $regex: query, $options: 'i' } },
-                      { school: { $regex: query, $options: 'i' } },
-                      { class: { $regex: query, $options: 'i' } },
-                      { section: { $regex: query, $options: 'i' } },
-                  ],
-              },
-          ],
-      }).select('name profilePic class section school');
+      let filters = { _id: { $ne: userId } }; // Exclude the user who is searching
+
+      if (query) {
+          filters.$or = [
+              { name: { $regex: query, $options: 'i' } },
+              { school: { $regex: query, $options: 'i' } },
+              { class: { $regex: query, $options: 'i' } },
+              { section: { $regex: query, $options: 'i' } },
+          ];
+      }
+
+      if (school) {
+          filters.school = { $regex: school, $options: 'i' };
+      }
+
+      if (userClass) {
+          filters.class = { $regex: userClass, $options: 'i' };
+      }
+
+      if (section) {
+          filters.section = { $regex: section, $options: 'i' };
+      }
+
+      if (interests) {
+          filters.interests = { $in: interests.split(',') }; // Assuming interests are comma-separated
+      }
+
+      const users = await User.find(filters).select('name profilePic class section school interests');
 
       res.json(users);
   } catch (err) {
