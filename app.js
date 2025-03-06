@@ -50,26 +50,6 @@ mongoose.connect(process.env.MONGO_URI, {
 const User = mongoose.model('User', UserSchema);
 
 //VERY RISKY CODE HERE
-app.get('/api/onlineFriends', async (req, res) => {
-  const { token } = req.headers;
-
-  if (!token) return res.status(401).json({ error: 'Unauthorized' });
-
-  try {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      const userId = decoded.userId;
-
-      const user = await User.findById(userId).populate('friends', 'name profilePic online');
-
-      if (!user) return res.status(404).json({ error: 'User not found' });
-
-      const onlineFriends = user.friends.filter(friend => friend.online); //filter friends who are online.
-
-      res.json(onlineFriends);
-  } catch (err) {
-      res.status(500).json({ error: 'Server error' });
-  }
-});
 app.get('/searchUsers', async (req, res) => {
   const { query, school, class: userClass, section, interests } = req.query;
   const { token } = req.headers;
@@ -435,8 +415,26 @@ app.get('/profile', async (req, res) => {
   }
 });
 
+app.get('/api/onlineFriends', async (req, res) => {
+  const { token } = req.headers;
 
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
 
+  try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      const userId = decoded.userId;
+
+      const user = await User.findById(userId).populate('friends', 'name profilePic online');
+
+      if (!user) return res.status(404).json({ error: 'User not found' });
+
+      const onlineFriends = user.friends.filter(friend => friend.online); //filter friends who are online.
+
+      res.json(onlineFriends);
+  } catch (err) {
+      res.status(500).json({ error: 'Server error' });
+  }
+});
 
 
 io.on('connection', (socket) => {
@@ -454,6 +452,18 @@ io.on('connection', (socket) => {
           console.log(`User ${userId} disconnected`);
           User.findByIdAndUpdate(userId, { online: false }).exec(); //set online to false in database.
       }
+  });
+});
+io.on('connection', (socket) => {
+  console.log('A user connected:', socket.id);
+
+  socket.on('message', (data) => {
+    console.log('Message received:', data);
+    io.emit('message', data); 
+  });
+
+  socket.on('disconnect', () => {
+    console.log('A user disconnected:', socket.id);
   });
 });
 
