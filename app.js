@@ -441,17 +441,24 @@ io.on('connection', (socket) => {
   const userId = socket.handshake.query.userId; // Get userId from query
 
   if (userId) {
-      onlineUsers[userId] = socket.id;
-      console.log(`User ${userId} connected`);
-      User.findByIdAndUpdate(userId, { online: true }).exec(); //set online to true in database.
+    onlineUsers[userId] = socket.id;
+    console.log(`User ${userId} connected`);
+    User.findByIdAndUpdate(userId, { online: true }).exec(); //set online to true in database.
   }
+    console.log('A user connected:', socket.id);
+
+  socket.on('message', (data) => {
+    console.log('Message received:', data);
+    io.emit('message', data);
+  });
 
   socket.on('disconnect', () => {
-      if (userId) {
-          delete onlineUsers[userId];
-          console.log(`User ${userId} disconnected`);
-          User.findByIdAndUpdate(userId, { online: false }).exec(); //set online to false in database.
-      }
+    if (userId) {
+      delete onlineUsers[userId];
+      console.log(`User ${userId} disconnected`);
+      User.findByIdAndUpdate(userId, { online: false }).exec(); //set online to false in database.
+    }
+      console.log('A user disconnected:', socket.id);
   });
 });
 io.on('connection', (socket) => {
