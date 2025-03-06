@@ -46,7 +46,7 @@ mongoose.connect(process.env.MONGO_URI, {
     friendRequests: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
     online: { type: Boolean, default: false },
 });
-
+const onlineUsers = {};
 const User = mongoose.model('User', UserSchema);
 
 //VERY RISKY CODE HERE
