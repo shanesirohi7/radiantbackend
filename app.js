@@ -316,6 +316,39 @@ app.get('/userDetails/:userId', async (req, res) => {
       res.status(500).json({ error: 'Server error' });
   }
 });
+const MemorySchema = new mongoose.Schema({
+  title: String,
+  author: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  taggedFriends: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+  createdAt: { type: Date, default: Date.now }
+});
+const Memory = mongoose.model('Memory', MemorySchema);
+
+app.post('/uploadMemory', async (req, res) => {
+  const { token } = req.headers;
+  const { title, taggedFriends } = req.body;
+
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+  if (!title) return res.status(400).json({ error: 'Title is required' });
+
+  try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      const userId = decoded.userId;
+
+      const memory = new Memory({
+          title: title,
+          author: userId,
+          taggedFriends: taggedFriends ? taggedFriends.split(',') : [],
+      });
+
+      await memory.save();
+
+      res.json({ message: 'Memory uploaded successfully', memory });
+  } catch (err) {
+      console.error('Memory upload error:', err);
+      res.status(500).json({ error: 'Server error' });
+  }
+});
 //RISKY CODE OVER
 
 
