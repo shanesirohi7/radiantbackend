@@ -438,15 +438,25 @@ app.get('/profile', async (req, res) => {
 
   try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      const user = await User.findById(decoded.userId).select('-password');
+      const userId = decoded.userId;
+
+      const user = await User.findById(userId).select('-password');
 
       if (!user) return res.status(404).json({ error: 'User not found' });
 
-      // Fetch the count of memories authored by the user
-      const memoryCount = await Memory.countDocuments({ author: decoded.userId });
+      const memoryCount = await Memory.countDocuments({ author: userId });
 
-      // Add the memory count to the user object
-      res.json({ ...user.toObject(), memoryCount }); // toObject() to make it modifiable.
+      // Fetch created memories
+      const createdMemories = await Memory.find({ author: userId })
+          .populate('author', 'name profilePic')
+          .populate('taggedFriends', 'name profilePic');
+
+      // Fetch tagged memories
+      const taggedMemories = await Memory.find({ taggedFriends: userId })
+          .populate('author', 'name profilePic')
+          .populate('taggedFriends', 'name profilePic');
+
+      res.json({ ...user.toObject(), memoryCount, createdMemories, taggedMemories });
   } catch (err) {
       res.status(401).json({ error: 'Invalid token' });
   }
