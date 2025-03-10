@@ -461,6 +461,25 @@ app.get('/profile', async (req, res) => {
       res.status(401).json({ error: 'Invalid token' });
   }
 });
+app.get('/memory/:memoryId', async (req, res) => {
+  const { memoryId } = req.params;
+
+  if (!memoryId) return res.status(400).json({ error: 'Memory ID is required' });
+
+  try {
+      const memory = await Memory.findById(memoryId)
+          .populate('author', 'name profilePic')
+          .populate('taggedFriends', 'name profilePic');
+
+      if (!memory) return res.status(404).json({ error: 'Memory not found' });
+
+      res.json(memory);
+  } catch (err) {
+      console.error('Error fetching memory:', err);
+      res.status(500).json({ error: 'Server error' });
+  }
+});
+
 
 app.get('/api/onlineFriends', async (req, res) => {
   const { token } = req.headers;
