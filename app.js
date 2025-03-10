@@ -484,6 +484,10 @@ app.post('/memory/:memoryId/addPhoto', async (req, res) => {
   const { photoUrl } = req.body;
   const { memoryId } = req.params;
 
+  console.log('Token:', token);
+  console.log('Memory ID:', memoryId);
+  console.log('Photo URL:', photoUrl);
+
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
   if (!photoUrl) return res.status(400).json({ error: 'Photo URL is required' });
 
@@ -491,21 +495,35 @@ app.post('/memory/:memoryId/addPhoto', async (req, res) => {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
       const userId = decoded.userId;
 
-      const memory = await Memory.findById(memoryId);
-      if (!memory) return res.status(404).json({ error: 'Memory not found' });
+      console.log('Decoded User ID:', userId);
 
-      // Check if the user is authorized to add photos (author or tagged)
+      console.log('Finding Memory...');
+      const memory = await Memory.findById(memoryId);
+      if (!memory) {
+          console.log('Memory not found!');
+          return res.status(404).json({ error: 'Memory not found' });
+      }
+      console.log('Memory found:', memory);
+
+      console.log('User ID:', userId);
+      console.log('Memory Author:', memory.author.toString());
+      console.log('Tagged Friends:', memory.taggedFriends);
+
       if (memory.author.toString() !== userId && !memory.taggedFriends.includes(userId)) {
+          console.log('Unauthorized!');
           return res.status(403).json({ error: 'Unauthorized to add photos' });
       }
 
       memory.photos.push(photoUrl);
+      console.log('Saving Memory...');
       await memory.save();
+      console.log('Memory saved successfully!');
 
       res.json({ message: 'Photo added successfully', memory });
   } catch (err) {
       console.error('Add photo error:', err);
-      res.status(500).json({ error: 'Server error' });
+      console.error('Stack Trace:', err.stack);
+      res.status(500).json({ error: 'Server error', details: err.message });
   }
 });
 
