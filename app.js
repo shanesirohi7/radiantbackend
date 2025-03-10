@@ -320,7 +320,8 @@ const MemorySchema = new mongoose.Schema({
   title: String,
   author: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   taggedFriends: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
-  createdAt: { type: Date, default: Date.now }
+  createdAt: { type: Date, default: Date.now },
+  photos: { type: [String], default: [] }
 });
 const Memory = mongoose.model('Memory', MemorySchema);
 
