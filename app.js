@@ -437,14 +437,18 @@ app.get('/profile', async (req, res) => {
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    const user = await User.findById(decoded.userId).select('-password');
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      const user = await User.findById(decoded.userId).select('-password');
 
-    if (!user) return res.status(404).json({ error: 'User not found' });
+      if (!user) return res.status(404).json({ error: 'User not found' });
 
-    res.json(user);
+      // Fetch the count of memories authored by the user
+      const memoryCount = await Memory.countDocuments({ author: decoded.userId });
+
+      // Add the memory count to the user object
+      res.json({ ...user.toObject(), memoryCount }); // toObject() to make it modifiable.
   } catch (err) {
-    res.status(401).json({ error: 'Invalid token' });
+      res.status(401).json({ error: 'Invalid token' });
   }
 });
 
