@@ -482,7 +482,6 @@ app.get('/memory/:memoryId', async (req, res) => {
 });
 app.get('/memories', async (req, res) => {
   const { token } = req.headers;
-  const { page = 1, limit = 10 } = req.query; // Add page and limit for pagination
 
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
 
@@ -494,9 +493,8 @@ app.get('/memories', async (req, res) => {
     if (!user) return res.status(404).json({ error: 'User not found' });
 
     const friends = user.friends;
-    friends.push(userId); // Include the user's own memories
+    friends.push(userId);
 
-    // Fetch memories based on the algorithm: user's, friends', others'
     const userMemories = await Memory.find({ author: userId })
       .populate('author', 'name profilePic')
       .populate('taggedFriends', 'name profilePic');
@@ -509,20 +507,55 @@ app.get('/memories', async (req, res) => {
       .populate('author', 'name profilePic')
       .populate('taggedFriends', 'name profilePic');
 
-    // Combine and sort memories
     const allMemories = [...userMemories, ...friendsMemories, ...otherMemories];
-    allMemories.sort((a, b) => b.createdAt - a.createdAt); // Sort by createdAt (latest first)
+    allMemories.sort((a, b) => b.createdAt - a.createdAt);
 
-    // Pagination
-    const startIndex = (page - 1) * limit;
-    const endIndex = page * limit;
-    const paginatedMemories = allMemories.slice(startIndex, endIndex);
+    // Send the first 10 memories
+    res.json(allMemories.slice(0, 10)); // send the first 10
 
-    res.json(paginatedMemories);
   } catch (err) {
     console.error('Error fetching memories:', err);
     res.status(500).json({ error: 'Server error' });
   }
+});
+
+app.get('/memories/more/:offset', async (req, res) => {
+    const { token } = req.headers;
+    const { offset } = req.params;
+    if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+    try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const userId = decoded.userId;
+
+        const user = await User.findById(userId);
+        if (!user) return res.status(404).json({ error: 'User not found' });
+
+        const friends = user.friends;
+        friends.push(userId);
+
+        const userMemories = await Memory.find({ author: userId })
+          .populate('author', 'name profilePic')
+          .populate('taggedFriends', 'name profilePic');
+
+        const friendsMemories = await Memory.find({ author: { $in: friends } })
+          .populate('author', 'name profilePic')
+          .populate('taggedFriends', 'name profilePic');
+
+        const otherMemories = await Memory.find({ author: { $nin: friends } })
+          .populate('author', 'name profilePic')
+          .populate('taggedFriends', 'name profilePic');
+
+        const allMemories = [...userMemories, ...friendsMemories, ...otherMemories];
+        allMemories.sort((a, b) => b.createdAt - a.createdAt);
+
+        const offsetNumber = parseInt(offset, 10);
+        res.json(allMemories.slice(offsetNumber, offsetNumber + 10)); //send the next 10
+
+    } catch (err) {
+        console.error('Error fetching memories:', err);
+        res.status(500).json({ error: 'Server error' });
+    }
 });
 app.post('/memory/:memoryId/addPhoto', async (req, res) => {
   const { token } = req.headers;
