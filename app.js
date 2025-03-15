@@ -480,7 +480,40 @@ app.get('/memory/:memoryId', async (req, res) => {
       res.status(500).json({ error: 'Server error' });
   }
 });
+app.get('/friendsMemories', async (req, res) => {
+  const { token } = req.headers;
 
+  if (!token) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const userId = decoded.userId;
+
+    const user = await User.findById(userId).populate('friends');
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    const friendIds = user.friends.map(friend => friend._id);
+
+    const friendsMemories = await Memory.find({
+      $or: [
+        { author: { $in: friendIds } },
+        { taggedFriends: { $elemMatch: { $in: friendIds } } },
+      ],
+    })
+      .populate('author taggedFriends')
+      .sort({ createdAt: -1 });
+
+    res.json(friendsMemories);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
 app.post('/memory/:memoryId/addPhoto', async (req, res) => {
   const { token } = req.headers;
   const { photoUrl } = req.body;
