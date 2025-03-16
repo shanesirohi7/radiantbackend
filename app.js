@@ -301,6 +301,115 @@ app.get('/recommendUsers', async (req, res) => {
       res.status(500).json({ error: 'Server error' });
   }
 });
+
+// Get conversations for a user
+app.get('/conversations', async (req, res) => {
+  const { token } = req.headers;
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+  try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      const userId = decoded.userId;
+
+      const conversations = await Conversation.find({ participants: userId })
+          .populate('participants', 'name profilePic');
+
+      res.json(conversations);
+  } catch (err) {
+      res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Create a new conversation
+app.post('/conversations', async (req, res) => {
+  const { token } = req.headers;
+  const { participantIds } = req.body; // Array of user IDs
+
+  if (!token || !participantIds || !Array.isArray(participantIds)) {
+      return res.status(400).json({ error: 'Missing parameters' });
+  }
+
+  try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      const userId = decoded.userId;
+
+      // Ensure the current user is included in the participants
+      if (!participantIds.includes(userId)) {
+          participantIds.push(userId);
+      }
+
+      const conversation = new Conversation({ participants: participantIds });
+      await conversation.save();
+
+      res.json(conversation);
+  } catch (err) {
+      res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Get messages for a conversation
+app.get('/messages/:conversationId', async (req, res) => {
+  const { conversationId } = req.params;
+  const { token } = req.headers;
+
+  if (!token || !conversationId) {
+      return res.status(400).json({ error: 'Missing parameters' });
+  }
+
+  try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      const userId = decoded.userId;
+
+      // Verify the user is a participant
+      const conversation = await Conversation.findById(conversationId);
+      if (!conversation || !conversation.participants.includes(userId)) {
+          return res.status(403).json({ error: 'Unauthorized' });
+      }
+
+      const messages = await Message.find({ conversationId })
+          .populate('senderId', 'name profilePic')
+          .sort({ createdAt: 1 });
+
+      res.json(messages);
+  } catch (err) {
+      res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Send a new message
+app.post('/messages/:conversationId', async (req, res) => {
+  const { conversationId } = req.params;
+  const { content } = req.body;
+  const { token } = req.headers;
+
+  if (!token || !conversationId || !content) {
+      return res.status(400).json({ error: 'Missing parameters' });
+  }
+
+  try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      const userId = decoded.userId;
+
+      const conversation = await Conversation.findById(conversationId);
+      if (!conversation || !conversation.participants.includes(userId)) {
+          return res.status(403).json({ error: 'Unauthorized' });
+      }
+
+      const message = new Message({ conversationId, senderId: userId, content });
+      await message.save();
+
+      // Emit the new message via Socket.IO
+      io.to(conversationId.toString()).emit('new_message', {
+          ...message.toObject(),
+          senderId: { _id: userId }, // Populate senderId on the frontend as needed
+      });
+
+      res.json(message);
+  } catch (err) {
+      res.status(500).json({ error: 'Server error' });
+  }
+});
+
 app.get('/userDetails/:userId', async (req, res) => {
   const { userId } = req.params;
 
@@ -316,6 +425,21 @@ app.get('/userDetails/:userId', async (req, res) => {
       res.status(500).json({ error: 'Server error' });
   }
 });
+const ConversationSchema = new mongoose.Schema({
+  participants: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+  createdAt: { type: Date, default: Date.now },
+});
+
+const MessageSchema = new mongoose.Schema({
+  conversationId: { type: mongoose.Schema.Types.ObjectId, ref: 'Conversation' },
+  senderId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  content: String, // Or use a more flexible schema for different message types
+  createdAt: { type: Date, default: Date.now },
+});
+
+const Conversation = mongoose.model('Conversation', ConversationSchema);
+const Message = mongoose.model('Message', MessageSchema);
+
 const MemorySchema = new mongoose.Schema({
   title: String,
   author: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
@@ -585,26 +709,30 @@ app.get('/api/onlineFriends', async (req, res) => {
 
 
 io.on('connection', (socket) => {
-  const userId = socket.handshake.query.userId; // Get userId from query
+  const userId = socket.handshake.query.userId;
 
   if (userId) {
-    onlineUsers[userId] = socket.id;
-    console.log(`User ${userId} connected`);
-    User.findByIdAndUpdate(userId, { online: true }).exec(); //set online to true in database.
+      onlineUsers[userId] = socket.id;
+      console.log(`User ${userId} connected`);
+      User.findByIdAndUpdate(userId, { online: true }).exec();
   }
-    console.log('A user connected:', socket.id);
 
-  socket.on('message', (data) => {
-    console.log('Message received:', data);
-    io.emit('message', data);
+  socket.on('join_conversation', (conversationId) => {
+      socket.join(conversationId);
+      console.log(`User ${userId} joined conversation: ${conversationId}`);
+  });
+
+  socket.on('leave_conversation', (conversationId) => {
+      socket.leave(conversationId);
+      console.log(`User ${userId} left conversation: ${conversationId}`);
   });
 
   socket.on('disconnect', () => {
-    if (userId) {
-      delete onlineUsers[userId];
-      console.log(`User ${userId} disconnected`);
-      User.findByIdAndUpdate(userId, { online: false }).exec(); //set online to false in database.
-    }
+      if (userId) {
+          delete onlineUsers[userId];
+          console.log(`User ${userId} disconnected`);
+          User.findByIdAndUpdate(userId, { online: false }).exec();
+      }
       console.log('A user disconnected:', socket.id);
   });
 });
