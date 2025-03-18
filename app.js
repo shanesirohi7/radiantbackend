@@ -323,7 +323,7 @@ app.get('/conversations', async (req, res) => {
 // Create a new conversation
 app.post('/conversations', async (req, res) => {
   const { token } = req.headers;
-  const { participantIds } = req.body; // Array of user IDs
+  const { participantIds } = req.body;
 
   if (!token || !participantIds || !Array.isArray(participantIds)) {
       return res.status(400).json({ error: 'Missing parameters' });
@@ -333,9 +333,12 @@ app.post('/conversations', async (req, res) => {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
       const userId = decoded.userId;
 
-      // Ensure the current user is included in the participants
       if (!participantIds.includes(userId)) {
           participantIds.push(userId);
+      }
+      //Validation checks.
+      if (participantIds.length < 2){
+          return res.status(400).json({error: "Not enough participants"})
       }
 
       const conversation = new Conversation({ participants: participantIds });
@@ -343,6 +346,7 @@ app.post('/conversations', async (req, res) => {
 
       res.json(conversation);
   } catch (err) {
+      console.error('Conversations error:', err);
       res.status(500).json({ error: 'Server error' });
   }
 });
