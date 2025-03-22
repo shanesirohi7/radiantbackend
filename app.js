@@ -437,8 +437,11 @@ const ConversationSchema = new mongoose.Schema({
 const MessageSchema = new mongoose.Schema({
   conversationId: { type: mongoose.Schema.Types.ObjectId, ref: 'Conversation' },
   senderId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-  content: String, // Or use a more flexible schema for different message types
+  content: String,
   createdAt: { type: Date, default: Date.now },
+  // New fields for delivery and read status
+  deliveredTo: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+  readBy: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }]
 });
 
 const Conversation = mongoose.model('Conversation', ConversationSchema);
@@ -661,7 +664,30 @@ app.get('/userMemories/:userId', async (req, res) => {
     res.status(500).json({ error: 'Server error' });
   }
 });
+app.post('/messages/markAsRead', async (req, res) => {
+  const { messageIds } = req.body;
+  const { token } = req.headers;
 
+  if (!token || !messageIds || !Array.isArray(messageIds)) {
+    return res.status(400).json({ error: 'Missing parameters' });
+  }
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const userId = decoded.userId;
+
+    // Update all specified messages
+    await Message.updateMany(
+      { _id: { $in: messageIds } },
+      { $addToSet: { readBy: userId } }
+    );
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Error marking messages as read:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
 app.post('/memory/:memoryId/addPhoto', async (req, res) => {
   const { token } = req.headers;
   const { photoUrl } = req.body;
@@ -761,15 +787,43 @@ io.on('connection', (socket) => {
   });
 });
 io.on('connection', (socket) => {
-  console.log('A user connected:', socket.id);
+  const userId = socket.handshake.query.userId;
 
-  socket.on('message', (data) => {
-    console.log('Message received:', data);
-    io.emit('message', data); 
+  // Keep your existing socket event handlers
+  
+  // Add these new handlers
+  socket.on('message_delivered', async ({ messageId, userId, conversationId }) => {
+    try {
+      // Update the message in the database
+      await Message.findByIdAndUpdate(
+        messageId,
+        { $addToSet: { deliveredTo: userId } }
+      );
+      
+      // Notify other users in the conversation
+      socket.to(conversationId).emit('message_delivered_update', {
+        messageId,
+        deliveredTo: [userId]
+      });
+    } catch (err) {
+      console.error('Error updating message delivery status:', err);
+    }
   });
 
-  socket.on('disconnect', () => {
-    console.log('A user disconnected:', socket.id);
+  socket.on('messages_read', async ({ conversationId, messageIds, readBy }) => {
+    try {
+      // Notify other users in the conversation
+      socket.to(conversationId).emit('message_read_update', {
+        messageIds,
+        readBy: [readBy]
+      });
+    } catch (err) {
+      console.error('Error broadcasting read status:', err);
+    }
+  });
+  
+  socket.on('typing_indicator', ({ conversationId, userId, isTyping }) => {
+    socket.to(conversationId).emit('typing_indicator', { userId, isTyping });
   });
 });
 
