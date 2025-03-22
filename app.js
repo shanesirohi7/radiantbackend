@@ -1,3 +1,4 @@
+//ALL IMPORTS
 require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
@@ -5,17 +6,19 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const cors = require('cors');
 const cloudinary = require('cloudinary').v2;
-
 const http = require('http');
 const { Server } = require('socket.io');
 
+
+
+
+//SETUP
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: { origin: '*' }
 });
 const PORT = process.env.PORT || 5000;
-
 
 app.use(express.json());
 app.use(cors());
@@ -31,25 +34,166 @@ mongoose.connect(process.env.MONGO_URI, {
   useUnifiedTopology: true,
 }).then(() => console.log('MongoDB Connected'))
   .catch(err => console.error(err));
-
-  const UserSchema = new mongoose.Schema({
-    name: String,
-    email: { type: String, unique: true },
-    password: String,
-    school: String,
-    profilePic: String,
-    class: String,
-    section: String,
-    interests: [String],
-    instagramUsername: String,
-    friends: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
-    friendRequests: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
-    online: { type: Boolean, default: false },
-});
 const onlineUsers = {};
+
+
+
+
+
+//SCHEMAS
+const UserSchema = new mongoose.Schema({
+  name: String,
+  email: { type: String, unique: true },
+  password: String,
+  school: String,
+  profilePic: String,
+  class: String,
+  section: String,
+  interests: [String],
+  instagramUsername: String,
+  friends: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+  friendRequests: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+  online: { type: Boolean, default: false },
+  // New fields
+  bio: { type: String, default: '' }, // Optional bio with default empty string
+  coverPhoto: { type: String, default: '' }, // Optional cover photo URL with default empty string
+  relationshipStatus: { 
+      type: String, 
+      enum: ['Single', 'In a relationship', 'Married', 'Complicated', ''], // Controlled options, including empty
+      default: '' 
+  },
+});
 const User = mongoose.model('User', UserSchema);
 
-//VERY RISKY CODE HERE
+const ConversationSchema = new mongoose.Schema({
+  participants: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+  createdAt: { type: Date, default: Date.now },
+});
+const Conversation = mongoose.model('Conversation', ConversationSchema);
+
+const MessageSchema = new mongoose.Schema({
+  conversationId: { type: mongoose.Schema.Types.ObjectId, ref: 'Conversation' },
+  senderId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  content: String,
+  createdAt: { type: Date, default: Date.now },
+  // New fields for delivery and read status
+  deliveredTo: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+  readBy: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }]
+});
+const Message = mongoose.model('Message', MessageSchema);
+
+const MemorySchema = new mongoose.Schema({
+  title: String,
+  author: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  taggedFriends: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+  createdAt: { type: Date, default: Date.now },
+  photos: { type: [String], default: [] }
+});
+const Memory = mongoose.model('Memory', MemorySchema);
+
+
+
+
+//USERS ROUTES
+app.put('/editprofile', async (req, res) => {
+  const { token } = req.headers;
+  const { 
+    profilePic, 
+    class: userClass, 
+    section, 
+    interests, 
+    instagramUsername, 
+    bio, 
+    coverPhoto, 
+    relationshipStatus 
+  } = req.body;
+
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const userId = decoded.userId;
+
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    // Update only the fields that are provided in the request
+    if (profilePic !== undefined) user.profilePic = profilePic;
+    if (userClass !== undefined) user.class = userClass;
+    if (section !== undefined) user.section = section;
+    if (interests !== undefined) user.interests = interests;
+    if (instagramUsername !== undefined) user.instagramUsername = instagramUsername;
+    if (bio !== undefined) user.bio = bio;
+    if (coverPhoto !== undefined) user.coverPhoto = coverPhoto;
+    if (relationshipStatus !== undefined) user.relationshipStatus = relationshipStatus;
+
+    await user.save();
+
+    // Return the updated user without the password
+    const updatedUser = await User.findById(userId).select('-password');
+    res.json({ message: 'Profile updated successfully', user: updatedUser });
+  } catch (err) {
+    console.error('Edit profile error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.get('/profile', async (req, res) => {
+  const { token } = req.headers;
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+  try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      const userId = decoded.userId;
+
+      const user = await User.findById(userId).select('-password');
+
+      if (!user) return res.status(404).json({ error: 'User not found' });
+
+      const memoryCount = await Memory.countDocuments({ author: userId });
+
+      // Fetch created memories
+      const createdMemories = await Memory.find({ author: userId })
+          .populate('author', 'name profilePic')
+          .populate('taggedFriends', 'name profilePic');
+
+      // Fetch tagged memories
+      const taggedMemories = await Memory.find({ taggedFriends: userId })
+          .populate('author', 'name profilePic')
+          .populate('taggedFriends', 'name profilePic');
+
+      res.json({ ...user.toObject(), memoryCount, createdMemories, taggedMemories });
+  } catch (err) {
+      res.status(401).json({ error: 'Invalid token' });
+  }
+});
+
+app.post('/profile', async (req, res) => {
+  const { token } = req.headers;
+  const { profilePic, class: userClass, section, interests, instagramUsername } = req.body;
+
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const user = await User.findById(decoded.userId);
+
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+  
+    user.profilePic = profilePic;
+    user.class = userClass;
+    user.section = section;
+    user.interests = interests;
+    user.instagramUsername = instagramUsername;
+    await user.save();
+
+    res.json({ message: 'Profile updated successfully', user });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 app.get('/searchUsers', async (req, res) => {
   const { query, school, class: userClass, section, interests } = req.query;
   const { token } = req.headers;
@@ -97,6 +241,7 @@ app.get('/searchUsers', async (req, res) => {
       res.status(500).json({ error: 'Server error' });
   }
 });
+
 app.get('/otherProfile/:userId', async (req, res) => {
   const { userId } = req.params;
 
@@ -128,7 +273,82 @@ app.get('/otherProfile/:userId', async (req, res) => {
       res.status(500).json({ error: 'Server error' });
   }
 });
+app.get('/userDetails/:userId', async (req, res) => {
+  const { userId } = req.params;
 
+  if (!userId) return res.status(400).json({ error: 'User ID is required' });
+
+  try {
+      const user = await User.findById(userId).select('-password');
+
+      if (!user) return res.status(404).json({ error: 'User not found' });
+
+      res.json(user);
+  } catch (err) {
+      res.status(500).json({ error: 'Server error' });
+  }
+});
+app.get('/recommendUsers', async (req, res) => {
+  const { token } = req.headers;
+
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+  try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      const userId = decoded.userId;
+
+      const user = await User.findById(userId);
+
+      if (!user) return res.status(404).json({ error: 'User not found' });
+
+      const sameClass = await User.find({ class: user.class, _id: { $ne: userId } })
+          .select('name profilePic class section interests');
+
+      const sameSchool = await User.find({ school: user.school, _id: { $ne: userId } })
+          .select('name profilePic class section interests');
+
+      const sameInterests = await User.find({ interests: { $in: user.interests }, _id: { $ne: userId } })
+          .select('name profilePic class section interests');
+
+      // Simple weighted algorithm (adjust weights as needed)
+      const recommendations = [];
+      const seen = new Set();
+
+      sameClass.forEach(u => {
+          if (!seen.has(u._id.toString())) {
+              recommendations.push({ ...u.toObject(), weight: 3 });
+              seen.add(u._id.toString());
+          }
+      });
+
+      sameSchool.forEach(u => {
+          if (!seen.has(u._id.toString())) {
+              recommendations.push({ ...u.toObject(), weight: 2 });
+              seen.add(u._id.toString());
+          }
+      });
+
+      sameInterests.forEach(u => {
+          if (!seen.has(u._id.toString())) {
+              recommendations.push({ ...u.toObject(), weight: 1 });
+              seen.add(u._id.toString());
+          }
+      });
+
+      // Sort by weight (highest first)
+      recommendations.sort((a, b) => b.weight - a.weight);
+
+      res.json(recommendations);
+  } catch (err) {
+      res.status(500).json({ error: 'Server error' });
+  }
+});
+
+
+
+
+
+//Friend requests
 app.post('/sendFriendRequest', async (req, res) => {
   const { token } = req.headers;
   const { friendId } = req.body;
@@ -210,6 +430,12 @@ app.post('/rejectFriendRequest', async (req, res) => {
       res.status(500).json({ error: 'Server error' });
   }
 });
+
+
+
+
+
+//FRIENDS
 app.get('/getFriends', async (req, res) => {
   const { token } = req.headers;
 
@@ -246,63 +472,37 @@ app.get('/getFriendRequests', async (req, res) => {
       res.status(500).json({ error: 'Server error' });
   }
 });
-app.get('/recommendUsers', async (req, res) => {
+
+
+
+
+
+
+// Chatting
+app.post('/messages/markAsRead', async (req, res) => {
+  const { messageIds } = req.body;
   const { token } = req.headers;
 
-  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+  if (!token || !messageIds || !Array.isArray(messageIds)) {
+    return res.status(400).json({ error: 'Missing parameters' });
+  }
 
   try {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      const userId = decoded.userId;
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const userId = decoded.userId;
 
-      const user = await User.findById(userId);
+    // Update all specified messages
+    await Message.updateMany(
+      { _id: { $in: messageIds } },
+      { $addToSet: { readBy: userId } }
+    );
 
-      if (!user) return res.status(404).json({ error: 'User not found' });
-
-      const sameClass = await User.find({ class: user.class, _id: { $ne: userId } })
-          .select('name profilePic class section interests');
-
-      const sameSchool = await User.find({ school: user.school, _id: { $ne: userId } })
-          .select('name profilePic class section interests');
-
-      const sameInterests = await User.find({ interests: { $in: user.interests }, _id: { $ne: userId } })
-          .select('name profilePic class section interests');
-
-      // Simple weighted algorithm (adjust weights as needed)
-      const recommendations = [];
-      const seen = new Set();
-
-      sameClass.forEach(u => {
-          if (!seen.has(u._id.toString())) {
-              recommendations.push({ ...u.toObject(), weight: 3 });
-              seen.add(u._id.toString());
-          }
-      });
-
-      sameSchool.forEach(u => {
-          if (!seen.has(u._id.toString())) {
-              recommendations.push({ ...u.toObject(), weight: 2 });
-              seen.add(u._id.toString());
-          }
-      });
-
-      sameInterests.forEach(u => {
-          if (!seen.has(u._id.toString())) {
-              recommendations.push({ ...u.toObject(), weight: 1 });
-              seen.add(u._id.toString());
-          }
-      });
-
-      // Sort by weight (highest first)
-      recommendations.sort((a, b) => b.weight - a.weight);
-
-      res.json(recommendations);
+    res.json({ success: true });
   } catch (err) {
-      res.status(500).json({ error: 'Server error' });
+    console.error('Error marking messages as read:', err);
+    res.status(500).json({ error: 'Server error' });
   }
 });
-
-// Get conversations for a user
 app.get('/conversations', async (req, res) => {
   const { token } = req.headers;
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
@@ -320,7 +520,6 @@ app.get('/conversations', async (req, res) => {
   }
 });
 
-// Create a new conversation
 app.post('/conversations', async (req, res) => {
   const { token } = req.headers;
   const { participantIds } = req.body;
@@ -414,185 +613,61 @@ app.post('/messages/:conversationId', async (req, res) => {
   }
 });
 
-app.get('/userDetails/:userId', async (req, res) => {
-  const { userId } = req.params;
 
-  if (!userId) return res.status(400).json({ error: 'User ID is required' });
 
-  try {
-      const user = await User.findById(userId).select('-password');
 
-      if (!user) return res.status(404).json({ error: 'User not found' });
 
-      res.json(user);
-  } catch (err) {
-      res.status(500).json({ error: 'Server error' });
-  }
-});
-const ConversationSchema = new mongoose.Schema({
-  participants: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
-  createdAt: { type: Date, default: Date.now },
-});
 
-const MessageSchema = new mongoose.Schema({
-  conversationId: { type: mongoose.Schema.Types.ObjectId, ref: 'Conversation' },
-  senderId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-  content: String,
-  createdAt: { type: Date, default: Date.now },
-  // New fields for delivery and read status
-  deliveredTo: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
-  readBy: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }]
-});
+//MEMORIES
 
-const Conversation = mongoose.model('Conversation', ConversationSchema);
-const Message = mongoose.model('Message', MessageSchema);
-
-const MemorySchema = new mongoose.Schema({
-  title: String,
-  author: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-  taggedFriends: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
-  createdAt: { type: Date, default: Date.now },
-  photos: { type: [String], default: [] }
-});
-const Memory = mongoose.model('Memory', MemorySchema);
-
-app.post('/uploadMemory', async (req, res) => {
+app.post('/memory/:memoryId/addPhoto', async (req, res) => {
   const { token } = req.headers;
-  const { title, taggedFriends } = req.body;
+  const { photoUrl } = req.body;
+  const { memoryId } = req.params;
+
+  console.log('Token:', token);
+  console.log('Memory ID:', memoryId);
+  console.log('Photo URL:', photoUrl);
 
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
-  if (!title) return res.status(400).json({ error: 'Title is required' });
+  if (!photoUrl) return res.status(400).json({ error: 'Photo URL is required' });
 
   try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
       const userId = decoded.userId;
 
-      const memory = new Memory({
-          title: title,
-          author: userId,
-          taggedFriends: taggedFriends ? taggedFriends.split(',') : [],
-      });
+      console.log('Decoded User ID:', userId);
 
-      await memory.save();
-
-      res.json({ message: 'Memory uploaded successfully', memory });
-  } catch (err) {
-      console.error('Memory upload error:', err);
-      res.status(500).json({ error: 'Server error' });
-  }
-});
-//RISKY CODE OVER
-
-
-app.post('/signup', async (req, res) => {
-  const { name, email, password, school } = req.body;
-  if (!name || !email || !password || !school) {
-    return res.status(400).json({ error: 'All fields are required' });
-  }
-
-  try {
-    const existingUser = await User.findOne({ email });
-    if (existingUser) return res.status(400).json({ error: 'User already exists' });
-
-    const hashedPassword = await bcrypt.hash(password, 10);
-    const user = new User({ name, email, password: hashedPassword, school });
-    await user.save();
-
-    // JWT Generation
-    const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, { expiresIn: '7d' });
-
-    res.status(201).json({ message: 'Signup successful', token, userId: user._id });
-  } catch (err) {
-    console.error("Server Error:", err);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
-
-
-app.post('/profile', async (req, res) => {
-  const { token } = req.headers;
-  const { profilePic, class: userClass, section, interests, instagramUsername } = req.body;
-
-  if (!token) return res.status(401).json({ error: 'Unauthorized' });
-
-  try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    const user = await User.findById(decoded.userId);
-
-    if (!user) return res.status(404).json({ error: 'User not found' });
-
-  
-    user.profilePic = profilePic;
-    user.class = userClass;
-    user.section = section;
-    user.interests = interests;
-    user.instagramUsername = instagramUsername;
-    await user.save();
-
-    res.json({ message: 'Profile updated successfully', user });
-  } catch (err) {
-    res.status(500).json({ error: 'Server error' });
-  }
-});
-
-
-app.post('/login', async (req, res) => {
-  const { email, password } = req.body;
-  if (!email || !password) return res.status(400).json({ error: 'All fields are required' });
-
-  try {
-    const user = await User.findOne({ email });
-    if (!user) return res.status(400).json({ error: 'Invalid credentials' });
-
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) return res.status(400).json({ error: 'Invalid credentials' });
-
-    const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, { expiresIn: '7d' });
-
-    res.json({ 
-      token, 
-      user: {
-        name: user.name, email: user.email, school: user.school, 
-        profilePic: user.profilePic, class: user.class, section: user.section,
-        interests: user.interests, instagramUsername: user.instagramUsername
+      console.log('Finding Memory...');
+      const memory = await Memory.findById(memoryId);
+      if (!memory) {
+          console.log('Memory not found!');
+          return res.status(404).json({ error: 'Memory not found' });
       }
-    });
+      console.log('Memory found:', memory);
 
+      console.log('User ID:', userId);
+      console.log('Memory Author:', memory.author.toString());
+      console.log('Tagged Friends:', memory.taggedFriends);
+
+      if (memory.author.toString() !== userId && !memory.taggedFriends.includes(userId)) {
+          console.log('Unauthorized!');
+          return res.status(403).json({ error: 'Unauthorized to add photos' });
+      }
+
+      memory.photos.push(photoUrl);
+      console.log('Saving Memory...');
+      await memory.save();
+      console.log('Memory saved successfully!');
+
+      res.json({ message: 'Photo added successfully', memory });
   } catch (err) {
-    res.status(500).json({ error: 'Server error' });
+      console.error('Add photo error:', err);
+      console.error('Stack Trace:', err.stack);
+      res.status(500).json({ error: 'Server error', details: err.message });
   }
 });
 
-  
-app.get('/profile', async (req, res) => {
-  const { token } = req.headers;
-  if (!token) return res.status(401).json({ error: 'Unauthorized' });
-
-  try {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      const userId = decoded.userId;
-
-      const user = await User.findById(userId).select('-password');
-
-      if (!user) return res.status(404).json({ error: 'User not found' });
-
-      const memoryCount = await Memory.countDocuments({ author: userId });
-
-      // Fetch created memories
-      const createdMemories = await Memory.find({ author: userId })
-          .populate('author', 'name profilePic')
-          .populate('taggedFriends', 'name profilePic');
-
-      // Fetch tagged memories
-      const taggedMemories = await Memory.find({ taggedFriends: userId })
-          .populate('author', 'name profilePic')
-          .populate('taggedFriends', 'name profilePic');
-
-      res.json({ ...user.toObject(), memoryCount, createdMemories, taggedMemories });
-  } catch (err) {
-      res.status(401).json({ error: 'Invalid token' });
-  }
-});
 app.get('/memory/:memoryId', async (req, res) => {
   const { memoryId } = req.params;
 
@@ -664,78 +739,102 @@ app.get('/userMemories/:userId', async (req, res) => {
     res.status(500).json({ error: 'Server error' });
   }
 });
-app.post('/messages/markAsRead', async (req, res) => {
-  const { messageIds } = req.body;
+
+app.post('/uploadMemory', async (req, res) => {
   const { token } = req.headers;
-
-  if (!token || !messageIds || !Array.isArray(messageIds)) {
-    return res.status(400).json({ error: 'Missing parameters' });
-  }
-
-  try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    const userId = decoded.userId;
-
-    // Update all specified messages
-    await Message.updateMany(
-      { _id: { $in: messageIds } },
-      { $addToSet: { readBy: userId } }
-    );
-
-    res.json({ success: true });
-  } catch (err) {
-    console.error('Error marking messages as read:', err);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
-app.post('/memory/:memoryId/addPhoto', async (req, res) => {
-  const { token } = req.headers;
-  const { photoUrl } = req.body;
-  const { memoryId } = req.params;
-
-  console.log('Token:', token);
-  console.log('Memory ID:', memoryId);
-  console.log('Photo URL:', photoUrl);
+  const { title, taggedFriends } = req.body;
 
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
-  if (!photoUrl) return res.status(400).json({ error: 'Photo URL is required' });
+  if (!title) return res.status(400).json({ error: 'Title is required' });
 
   try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
       const userId = decoded.userId;
 
-      console.log('Decoded User ID:', userId);
+      const memory = new Memory({
+          title: title,
+          author: userId,
+          taggedFriends: taggedFriends ? taggedFriends.split(',') : [],
+      });
 
-      console.log('Finding Memory...');
-      const memory = await Memory.findById(memoryId);
-      if (!memory) {
-          console.log('Memory not found!');
-          return res.status(404).json({ error: 'Memory not found' });
-      }
-      console.log('Memory found:', memory);
-
-      console.log('User ID:', userId);
-      console.log('Memory Author:', memory.author.toString());
-      console.log('Tagged Friends:', memory.taggedFriends);
-
-      if (memory.author.toString() !== userId && !memory.taggedFriends.includes(userId)) {
-          console.log('Unauthorized!');
-          return res.status(403).json({ error: 'Unauthorized to add photos' });
-      }
-
-      memory.photos.push(photoUrl);
-      console.log('Saving Memory...');
       await memory.save();
-      console.log('Memory saved successfully!');
 
-      res.json({ message: 'Photo added successfully', memory });
+      res.json({ message: 'Memory uploaded successfully', memory });
   } catch (err) {
-      console.error('Add photo error:', err);
-      console.error('Stack Trace:', err.stack);
-      res.status(500).json({ error: 'Server error', details: err.message });
+      console.error('Memory upload error:', err);
+      res.status(500).json({ error: 'Server error' });
   }
 });
 
+
+
+//AUTH
+app.post('/signup', async (req, res) => {
+  const { name, email, password, school } = req.body;
+  if (!name || !email || !password || !school) {
+    return res.status(400).json({ error: 'All fields are required' });
+  }
+
+  try {
+    const existingUser = await User.findOne({ email });
+    if (existingUser) return res.status(400).json({ error: 'User already exists' });
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const user = new User({ name, email, password: hashedPassword, school });
+    await user.save();
+
+    // JWT Generation
+    const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, { expiresIn: '7d' });
+
+    res.status(201).json({ message: 'Signup successful', token, userId: user._id });
+  } catch (err) {
+    console.error("Server Error:", err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+
+
+
+app.post('/login', async (req, res) => {
+  const { email, password } = req.body;
+  if (!email || !password) return res.status(400).json({ error: 'All fields are required' });
+
+  try {
+    const user = await User.findOne({ email });
+    if (!user) return res.status(400).json({ error: 'Invalid credentials' });
+
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) return res.status(400).json({ error: 'Invalid credentials' });
+
+    const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, { expiresIn: '7d' });
+
+    res.json({ 
+      token, 
+      user: {
+        name: user.name, email: user.email, school: user.school, 
+        profilePic: user.profilePic, class: user.class, section: user.section,
+        interests: user.interests, instagramUsername: user.instagramUsername
+      }
+    });
+
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+  
+
+
+
+
+
+
+
+
+
+
+//OTHERS
 app.get('/api/onlineFriends', async (req, res) => {
   const { token } = req.headers;
 
@@ -758,6 +857,9 @@ app.get('/api/onlineFriends', async (req, res) => {
 });
 
 
+
+
+//IO ROUTES
 io.on('connection', (socket) => {
   const userId = socket.handshake.query.userId;
 
