@@ -656,10 +656,11 @@ app.post('/memory/:memoryId/addTimelineEvent', async (req, res) => {
     memory.timelineEvents.push({ date, time, eventText });
     await memory.save();
     
-    await memory.populate('author', 'name profilePic')
-      .populate('taggedFriends', 'name profilePic')
-      .populate('likes', 'name profilePic')
-      .populate('comments.author', 'name profilePic');
+    // Populate fields sequentially
+    await memory.populate('author', 'name profilePic');
+    await memory.populate('taggedFriends', 'name profilePic');
+    await memory.populate('likes', 'name profilePic');
+    await memory.populate('comments.author', 'name profilePic');
 
     res.json({ message: 'Timeline event added successfully', memory });
   } catch (err) {
@@ -667,7 +668,6 @@ app.post('/memory/:memoryId/addTimelineEvent', async (req, res) => {
     res.status(500).json({ error: 'Server error' });
   }
 });
-
 // Like a memory
 app.post('/memory/:memoryId/like', async (req, res) => {
   const { token } = req.headers;
