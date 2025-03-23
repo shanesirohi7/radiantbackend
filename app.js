@@ -87,7 +87,20 @@ const MemorySchema = new mongoose.Schema({
   author: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   taggedFriends: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
   createdAt: { type: Date, default: Date.now },
-  photos: { type: [String], default: [] }
+  photos: { type: [String], default: [] },
+  // Added fields
+  timelineEvents: [{
+    date: { type: Date, required: true },
+    time: { type: String, required: true }, // Format like "14:30"
+    eventText: { type: String, required: true },
+    createdAt: { type: Date, default: Date.now }
+  }],
+  likes: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+  comments: [{
+    author: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    content: { type: String, required: true },
+    createdAt: { type: Date, default: Date.now }
+  }]
 });
 const Memory = mongoose.model('Memory', MemorySchema);
 
@@ -619,6 +632,105 @@ app.post('/messages/:conversationId', async (req, res) => {
 
 
 //MEMORIES
+app.post('/memory/:memoryId/addTimelineEvent', async (req, res) => {
+  const { token } = req.headers;
+  const { memoryId } = req.params;
+  const { date, time, eventText } = req.body;
+
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+  if (!date || !time || !eventText) {
+    return res.status(400).json({ error: 'All timeline event fields are required' });
+  }
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const userId = decoded.userId;
+
+    const memory = await Memory.findById(memoryId);
+    if (!memory) return res.status(404).json({ error: 'Memory not found' });
+    
+    if (memory.author.toString() !== userId && !memory.taggedFriends.includes(userId)) {
+      return res.status(403).json({ error: 'Unauthorized to add timeline events' });
+    }
+
+    memory.timelineEvents.push({ date, time, eventText });
+    await memory.save();
+    
+    await memory.populate('author', 'name profilePic')
+      .populate('taggedFriends', 'name profilePic')
+      .populate('likes', 'name profilePic')
+      .populate('comments.author', 'name profilePic');
+
+    res.json({ message: 'Timeline event added successfully', memory });
+  } catch (err) {
+    console.error('Add timeline event error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Like a memory
+app.post('/memory/:memoryId/like', async (req, res) => {
+  const { token } = req.headers;
+  const { memoryId } = req.params;
+
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const userId = decoded.userId;
+
+    const memory = await Memory.findById(memoryId);
+    if (!memory) return res.status(404).json({ error: 'Memory not found' });
+
+    if (memory.likes.includes(userId)) {
+      memory.likes.pull(userId);
+    } else {
+      memory.likes.push(userId);
+    }
+
+    await memory.save();
+    await memory.populate('likes', 'name profilePic');
+
+    res.json({ message: 'Like updated successfully', likes: memory.likes });
+  } catch (err) {
+    console.error('Like memory error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Add comment to memory
+app.post('/memory/:memoryId/comment', async (req, res) => {
+  const { token } = req.headers;
+  const { memoryId } = req.params;
+  const { content } = req.body;
+
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+  if (!content) return res.status(400).json({ error: 'Comment content is required' });
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const userId = decoded.userId;
+
+    const memory = await Memory.findById(memoryId);
+    if (!memory) return res.status(404).json({ error: 'Memory not found' });
+
+    memory.comments.push({
+      author: userId,
+      content
+    });
+
+    await memory.save();
+    await memory.populate('comments.author', 'name profilePic');
+
+    res.json({ 
+      message: 'Comment added successfully', 
+      comments: memory.comments 
+    });
+  } catch (err) {
+    console.error('Add comment error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
 
 app.post('/memory/:memoryId/addPhoto', async (req, res) => {
   const { token } = req.headers;
@@ -674,16 +786,18 @@ app.get('/memory/:memoryId', async (req, res) => {
   if (!memoryId) return res.status(400).json({ error: 'Memory ID is required' });
 
   try {
-      const memory = await Memory.findById(memoryId)
-          .populate('author', 'name profilePic')
-          .populate('taggedFriends', 'name profilePic');
+    const memory = await Memory.findById(memoryId)
+      .populate('author', 'name profilePic')
+      .populate('taggedFriends', 'name profilePic')
+      .populate('likes', 'name profilePic')
+      .populate('comments.author', 'name profilePic');
 
-      if (!memory) return res.status(404).json({ error: 'Memory not found' });
+    if (!memory) return res.status(404).json({ error: 'Memory not found' });
 
-      res.json(memory);
+    res.json(memory);
   } catch (err) {
-      console.error('Error fetching memory:', err);
-      res.status(500).json({ error: 'Server error' });
+    console.error('Error fetching memory:', err);
+    res.status(500).json({ error: 'Server error' });
   }
 });
 app.get('/friendsMemories', async (req, res) => {
@@ -755,6 +869,7 @@ app.post('/uploadMemory', async (req, res) => {
           title: title,
           author: userId,
           taggedFriends: taggedFriends ? taggedFriends.split(',') : [],
+          timelineEvents: timelineEvents || []
       });
 
       await memory.save();
