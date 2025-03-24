@@ -504,18 +504,29 @@ app.post('/messages/markAsRead', async (req, res) => {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     const userId = decoded.userId;
 
-    // Update all specified messages
-    await Message.updateMany(
-      { _id: { $in: messageIds } },
-      { $addToSet: { readBy: userId } }
+    // Only mark messages as read if they were SENT BY THE OTHER USER
+    const messages = await Message.find({ _id: { $in: messageIds } });
+
+    const messagesToUpdate = messages.filter(
+      (msg) => msg.senderId.toString() !== userId
     );
 
-    res.json({ success: true });
+    if (messagesToUpdate.length > 0) {
+      await Message.updateMany(
+        { _id: { $in: messagesToUpdate.map((msg) => msg._id) } },
+        { $addToSet: { readBy: userId } }
+      );
+
+      res.json({ success: true, updatedMessages: messagesToUpdate.length });
+    } else {
+      res.json({ success: false, message: "No messages needed to be marked as read" });
+    }
   } catch (err) {
     console.error('Error marking messages as read:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });
+
 app.get('/conversations', async (req, res) => {
   const { token } = req.headers;
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
