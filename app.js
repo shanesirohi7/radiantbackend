@@ -88,13 +88,15 @@ const MemorySchema = new mongoose.Schema({
   taggedFriends: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
   createdAt: { type: Date, default: Date.now },
   photos: { type: [String], default: [] },
-  // Added fields
-  timelineEvents: [{
-    date: { type: Date, required: true },
-    time: { type: String, required: true }, // Format like "14:30"
-    eventText: { type: String, required: true },
-    createdAt: { type: Date, default: Date.now }
-  }],
+  timelineEvents: {
+    type: [{
+      date: { type: Date, required: true },
+      time: { type: String, required: true },
+      eventText: { type: String, required: true },
+      createdAt: { type: Date, default: Date.now }
+    }],
+    default: [] // Add this to make the array optional
+  },
   likes: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
   comments: [{
     author: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
@@ -867,7 +869,7 @@ app.get('/userMemories/:userId', async (req, res) => {
 
 app.post('/uploadMemory', async (req, res) => {
   const { token } = req.headers;
-  const { title, taggedFriends } = req.body;
+  const { title, taggedFriends, timelineEvents } = req.body; // Destructure timelineEvents
 
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
   if (!title) return res.status(400).json({ error: 'Title is required' });
@@ -876,19 +878,19 @@ app.post('/uploadMemory', async (req, res) => {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
       const userId = decoded.userId;
 
+      const friendIds = taggedFriends ? taggedFriends.split(',').filter(id => mongoose.Types.ObjectId.isValid(id)) : [];
       const memory = new Memory({
           title: title,
           author: userId,
-          taggedFriends: taggedFriends ? taggedFriends.split(',') : [],
-          timelineEvents: timelineEvents || []
+          taggedFriends: friendIds,
+          timelineEvents: timelineEvents || [] // Use the sent value, default to empty array
       });
 
       await memory.save();
-
       res.json({ message: 'Memory uploaded successfully', memory });
   } catch (err) {
-      console.error('Memory upload error:', err);
-      res.status(500).json({ error: 'Server error' });
+      console.error('Memory upload error:', err.message, err.stack);
+      res.status(500).json({ error: 'Server error', details: err.message });
   }
 });
 
